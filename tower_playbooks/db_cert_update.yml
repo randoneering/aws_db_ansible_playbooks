@@ -1,0 +1,34 @@
+---
+- name: Update RDS Certs to ECC
+  hosts: all
+  tasks:
+    - name: connect to shared services
+      amazon.aws.sts_assume_role:
+        region: us-east-1 # Set your default region
+        role_arn: "IAM role to use for ansible playbooks"
+        role_session_name: "cert_update" # This can be anything
+      register: assumed_role_accountname # Change account name with your account name
+    
+    - name: get shared service rds instance details
+      amazon.aws.rds_instance_info:
+        region: us-east-1
+        aws_access_key: "{{ assumed_role_accountname.sts_creds.access_key }}"
+        aws_secret_key: "{{ assumed_role_accountname.sts_creds.secret_key }}"
+        security_token: "{{ assumed_role_accountname.sts_creds.session_token }}"
+      register: account_instances
+
+    - name: set var for identifier for account instances
+      ansible.builtin.set_fact:
+        account_instance_list: "{{ account_instances.instances | map(attribute='db_instance_identifier') | list }}"
+
+    - name: update certs for account instances
+      amazon.aws.rds_instance:
+        region: us-east-1
+        aws_access_key: "{{ assumed_role_accountname.sts_creds.access_key }}" 
+        aws_secret_key: "{{ assumed_role_accountname.sts_creds.secret_key }}"
+        security_token: "{{ assumed_role_accountname.sts_creds.session_token }}"
+        id: '{{ item }}' # This will be the mapped attribute above in the previous task, which is the 'db_instance_identifier'
+        state: present
+        ca_certificate_identifier: "rds-ca-ecc384-g1" # This is just an example
+        apply_immediately: true
+      with_items: "{{ account_instance_list }}"
