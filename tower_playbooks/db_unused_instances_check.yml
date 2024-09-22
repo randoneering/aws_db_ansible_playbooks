@@ -1,0 +1,122 @@
+---
+- name: Check unused instances 
+  hosts: all
+  vars:
+    tag_query1: "[?tags.Unused == 'True'].db_instance_identifier"
+    tag_query2: "[?tags.Unused == 'True'].db_cluster_identifier"
+  tasks:
+    - name: Set role credentials as environment variables
+      amazon.aws.sts_assume_role:
+        role_arn: rolearn
+        role_session_name: unused_instance_check
+      register: assume_role
+
+    - name: get rds instance details
+      amazon.aws.rds_instance_info:
+        region: us-east-1
+        access_key: "{{ assume_role.sts_creds.access_key }}"
+        secret_key: "{{ assume_role.sts_creds.secret_key }}"
+        session_token: "{{ assume_role.sts_creds.session_token }}"
+      register: instance
+
+    - name: filter out docdb and non_aurora instances in instances
+      ansible.builtin.set_fact:
+        instances: "{{ instance.instances | selectattr('engine', 'search', '^(?!aurora|docdb)') }}"
+
+    - name: filter out stopped instances
+      ansible.builtin.set_fact: 
+        instances_avail: "{{ instances | selectattr('db_instance_status', 'eq', 'available') }}"
+
+    - name: filter unused instances
+      ansible.builtin.set_fact:
+        instances_unused: "{{ instances_avail | json_query(tag_query1) }}"
+
+    - name: get rds cluster details
+      amazon.aws.rds_cluster_info:
+        region: us-east-1
+        access_key: "{{ assume_role.sts_creds.access_key }}"
+        secret_key: "{{ assume_role.sts_creds.secret_key }}"
+        session_token: "{{ assume_role.sts_creds.session_token }}"
+      register: cluster
+
+    - name: filter out stopped clusters
+      ansible.builtin.set_fact: 
+        clusters_avail: "{{ cluster.clusters | selectattr('status', 'eq', 'available') }}"    
+
+    - name: filter out unused clusters
+      ansible.builtin.set_fact:
+        clusters_unused: "{{ clusters_avail | json_query(tag_query2) }}"
+    - block:
+      - name: shutdown clusters
+        amazon.aws.rds_cluster:
+          region: us-east-1
+          access_key: "{{ assume_role.sts_creds.access_key }}"
+          secret_key: "{{ assume_role.sts_creds.secret_key }}"
+          session_token: "{{ assume_role.sts_creds.session_token }}"
+          db_cluster_identifier: '{{ item }}'
+          state: stopped
+          wait: false
+        with_items: "{{ clusters_unused }}"
+        when: clusters_unused is defined
+        register: clusters_shutdown
+      - name: shutdown instances
+        amazon.aws.rds_instance:
+          region: us-east-1
+          access_key: "{{ assume_role.sts_creds.access_key }}"
+          secret_key: "{{ assume_role.sts_creds.secret_key }}"
+          session_token: "{{ assume_role.sts_creds.session_token }}"
+          db_instance_identifier: '{{ item }}'
+          state: stopped
+          wait: false
+        with_items: "{{ instances_unused }}"
+        when: instances_unused is defined 
+        register: instances_shutdown
+      rescue:
+      - name: send notification via teams when shutdown fails
+        community.general.office_365_connector_card:
+          webhook: "{{ webhook }}"
+          title: "Unused instance playbook failed"
+          summary: "The unused instance playbook experienced an error "
+          text: "Check job {{ tower_job_id }} for unused playbook failure"
+
+    - name: Run AWS CLI command with assumed role
+      shell: aws support describe-trusted-advisor-check-result --check-id Ti39halfu8 --output json
+      environment:
+        AWS_ACCESS_KEY_ID: "{{ assume_role.sts_creds.access_key }}"
+        AWS_SECRET_ACCESS_KEY: "{{ assume_role.sts_creds.secret_key }}"
+        AWS_SESSION_TOKEN: "{{ assume_role.sts_creds.session_token }}" 
+      register: trusted_advisor_result
+
+    - name: Extract metadata
+      set_fact:
+        results: "{{ trusted_advisor_result.stdout }}"
+
+    - name: Further Extract
+      set_fact:
+        results_instances: "{{ results.result.flaggedResources | json_query('[*].metadata[1]') }}"
+
+    - name: Filter out stopped instances
+      ansible.builtin.set_fact: 
+        instances_stopped: "{{ instances | selectattr('db_instance_status', 'eq', 'stopped') | map(attribute='db_instance_identifier') | list}}"
+        clusters_stopped: "{{ cluster.clusters | selectattr('status', 'eq', 'stopped') | map(attribute='db_cluster_identifier') | list}}"
+        
+    - name: Render HTML template
+      ansible.builtin.template:
+        src: instances.html.j2
+        dest: /mnt/folder/instances.html
+
+    - name: Read the File Content
+      ansible.builtin.slurp:
+        src: /mnt/folder/instances.html
+      register: webhook_content
+
+    - name: Convert to string
+      ansible.builtin.set_fact:
+        webhook_body: "{{ webhook_content.content | b64decode }}"
+
+    - name: Send results via webhook 
+      community.general.office_365_connector_card:
+        webhook: "{{ webhook }}"
+        title: "Unused instance check results"
+        summary: "The following instances have not been connected to in over 5 days"
+        text: "{{ email_body }}"
