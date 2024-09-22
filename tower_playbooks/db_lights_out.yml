@@ -1,0 +1,81 @@
+---
+- name: Shutdown lower level env database instances
+  hosts: all
+  vars:
+    tag_query1: "[?tags.LightsOut == 'True'].db_instance_identifier"
+    tag_query2: "[?tags.LightsOut == 'True'].db_cluster_identifier"
+  tasks:
+    - name: connect to account
+      amazon.aws.sts_assume_role:
+        region: us-east-1
+        role_arn: iamrole
+        role_session_name: "db_lights_out_policy"
+      register: assumed_role
+
+    - name: get rds instance details
+      amazon.aws.rds_instance_info:
+        region: us-east-1
+        access_key: "{{ assumed_role.sts_creds.access_key }}"
+        secret_key: "{{ assumed_role.sts_creds.secret_key }}"
+        session_token: "{{ assumed_role.sts_creds.session_token }}"
+      register: instance
+
+    - name: filter out docdb and non_aurora instances in instances
+      ansible.builtin.set_fact:
+        instances: "{{ instance.instances | selectattr('engine', 'search', '^(?!aurora|docdb)') }}"
+
+    - name: filter out stopped instances
+      ansible.builtin.set_fact: 
+        instances_avail: "{{ instances | selectattr('db_instance_status', 'eq', 'available') }}"
+
+    - name: filter out exempt instances
+      ansible.builtin.set_fact:
+        instances_nonexempt: "{{ instances_avail | json_query(tag_query1) }}"
+
+    - name: get rds cluster details
+      amazon.aws.rds_cluster_info:
+        region: us-east-1
+        access_key: "{{ assumed_role.sts_creds.access_key }}"
+        secret_key: "{{ assumed_role.sts_creds.secret_key }}"
+        session_token: "{{ assumed_role.sts_creds.session_token }}"
+      register: cluster
+
+    - name: filter out stopped clusters
+      ansible.builtin.set_fact: 
+        clusters_avail: "{{ cluster.clusters | selectattr('status', 'eq', 'available') }}"    
+
+    - name: filter out exempt clusters
+      ansible.builtin.set_fact:
+        clusters_nonexempt: "{{ clusters_avail | json_query(tag_query2) }}"
+    - block:
+      - name: shutdown clusters
+        amazon.aws.rds_cluster:
+          region: us-east-1
+          access_key: "{{ assumed_role.sts_creds.access_key }}"
+          secret_key: "{{ assumed_role.sts_creds.secret_key }}"
+          session_token: "{{ assumed_role.sts_creds.session_token }}"
+          db_cluster_identifier: '{{ item }}'
+          state: stopped
+          wait: false
+        with_items: "{{ clusters_nonexempt }}"
+        when: clusters_nonexempt is defined
+        register: clusters_shutdown
+      - name: shutdown instances
+        amazon.aws.rds_instance:
+          region: us-east-1
+          access_key: "{{ assumed_role.sts_creds.access_key }}"
+          secret_key: "{{ assumed_role.sts_creds.secret_key }}"
+          session_token: "{{ assumed_role.sts_creds.session_token }}"
+          db_instance_identifier: '{{ item }}'
+          state: stopped
+          wait: false
+        with_items: "{{ instances_nonexempt }}"
+        when: instances_nonexempt is defined 
+        register: instances_shutdown
+      rescue:
+      - name: send notification via teams when shutdown fails
+        community.general.office_365_connector_card:
+          webhook: "{{ webhook }}"
+          title: "LightsOut playbook failed"
+          summary: "The LightsOut playbook experienced an error "
+          text: "Check job {{ tower_job_id }} for LightsOut playbook failure"
