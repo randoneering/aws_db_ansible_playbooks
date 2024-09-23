@@ -50,14 +50,14 @@
 
     - name: Send email with credentials tempuser (mysql)
       community.general.mail:
-        host: smtp.rxbenefits.com
+        host: email.smtp.server.com
         port: 25
         to: "{{ email }}"
-        from: dba@rxbenefits.com
-        subject: 'Credentials for temp user request in {{ jira_ticket }}'
+        from: your@email.com
+        subject: 'Credentials for temp user request in {{ ticket }}'
         secure: never
         body: |
-          credentials for {{ jira_ticket }}
+          credentials for {{ ticket }}
           user: "tempuser_rw"
           password: {{ mysql_user_rw_pass }}
           endpoint: {{ endpoint }}
@@ -66,14 +66,14 @@
 
     - name: Send email with credentials teampuser (postgres)
       community.general.mail:
-        host: smtp.rxbenefits.com
+        host: emai.smtp.server.com
         port: 25
         to: "{{ email }}"
-        from: dba@rxbenefits.com
+        from: your@email.com
         secure: never
-        subject: 'Credentials for temp user request in {{ jira_ticket }}'
+        subject: 'Credentials for temp user request in {{ ticket }}'
         body: |
-          credentials for {{ jira_ticket }}
+          credentials for {{ ticket }}
           user: "tempuser_rw"
           password: {{ pg_user_rw_pass }}
           endpoint: {{ endpoint }}
@@ -82,25 +82,25 @@
 
     - name: Alert DBA team about tempuser creation (email)
       community.general.mail:
-        host: smtp.rxbenefits.com
+        host: smtp.youremail.com
         port: 25
-        to: dba@rxbenefits.com
-        from: dba@rxbenefits.com
-        subject: 'Tempuser created for {{ jira_ticket }}'
+        to: randoneering@randoneering.tech
+        from: randoneering@randoneering.tech
+        subject: 'Tempuser created for {{ ticket }}'
         secure: never
         body: |
-          Tempuser was created for {{ endpoint }}. This will be dropped at 9pm CST by a scheduled ansible-playbook
+          Tempuser was created for {{ endpoint }}. This will be dropped at TIME by a scheduled ansible-playbook
       delegate_to: localhost
 
     - name: Alert DBA team about tempuser creation (teams)
       community.general.mail:
-        host: smtp.rxbenefits.com
+        host: smtp.youremail.com
         port: 25
         to: d508929c.rxbenefits.com@amer.teams.ms
-        from: dba@rxbenefits.com
-        subject: 'Tempuser created for {{ jira_ticket }}'
+        from: randoneering@randoneering.tech
+        subject: 'Tempuser created for {{ ticket }}'
         secure: never
         body: |
-          Tempuser was created for {{ endpoint }}. This will be dropped at 9pm CST by a scheduled ansible-playbook
+          Tempuser was created for {{ endpoint }}. This will be dropped at TIME by a scheduled ansible-playbook
       delegate_to: localhost
       
