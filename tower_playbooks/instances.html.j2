@@ -6,74 +6,18 @@
  <p>
  The following instances have not received a connection in over 14 days. Please shutdown these instances temporarily and follow up with impacted users
  </p>
- <p> QA Unused Instances:</p>
+ <p> Unused Instances:</p>
  <ul>
-   {% for instance in qa_results_instances %}
-   <li>{{ instance }}</li>
-   {% endfor %}
- </ul>
- <p> SS Unused Instances:</p>
- <ul>
-   {% for instance in ss_results_instances %}
-   <li>{{ instance }}</li>
-   {% endfor %}
- </ul>
- <p> DeDev Unused Instances:</p>
- <ul>
-   {% for instance in dedev_results_instances %}
-   <li>{{ instance }}</li>
-   {% endfor %}
- </ul>
- <p> DeProd Unused Instances:</p>
- <ul>
-   {% for instance in deprod_results_instances %}
-   <li>{{ instance }}</li>
-   {% endfor %}
- </ul>
- <p> DataNet Unused Instances:</p>
- <ul>
-   {% for instance in dnet_results_instances %}
-   <li>{{ instance }}</li>
-   {% endfor %}
- </ul>
- <p> ProdII Unused Instances:</p>
- <ul>
-   {% for instance in prodII_results_instances %}
+   {% for instance in results_instances %}
    <li>{{ instance }}</li>
    {% endfor %}
  </ul>
  <p> Stopped Instances:</p>
  <ul>
-   {% for instance in qa_instances_stopped %}
+   {% for instance in instances_stopped %}
    <li>{{ instance }}</li>
    {% endfor %}
-   {% for clusters in qa_clusters_stopped %}
+   {% for clusters in clusters_stopped %}
    <li>{{ clusters }}</li>
-   {% endfor %}
-   {% for instance in ss_instances_stopped %}
-   <li>{{ instance }}</li>
-   {% endfor %}
-   {% for clusters in ss_clusters_stopped %}
-   <li>{{ clusters }}</li>
-   {% endfor %}
-   {% for instance in dedev_instances_stopped %}
-   <li>{{ instance }}</li>
-   {% endfor %}
-   {% for clusters in dedev_clusters_stopped %}
-   <li>{{ clusters }}</li>
-   {% endfor %}
-   {% for instance in deprod_instances_stopped %}
-   <li>{{ instance }}</li>
-   {% endfor %}
-   {% for clusters in deprod_clusters_stopped %}
-   <li>{{ clusters }}</li>
-   {% endfor %}
-   {% for instance in appdev_instances_stopped %}
-   <li>{{ instance }}</li>
-   {% endfor %}
-   {% for clusters in appdev_clusters_stopped %}
-   <li>{{ clusters }}</li>
-   {% endfor %}
- </ul>
 </body>
 </html>
