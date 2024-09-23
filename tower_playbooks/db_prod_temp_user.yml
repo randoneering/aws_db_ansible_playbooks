@@ -96,7 +96,7 @@
       community.general.mail:
         host: smtp.youremail.com
         port: 25
-        to: d508929c.rxbenefits.com@amer.teams.ms
+        to: randoneering@randoneering.tech
         from: randoneering@randoneering.tech
         subject: 'Tempuser created for {{ ticket }}'
         secure: never
