@@ -1,0 +1,119 @@
+---
+- name: Drop all tempusers
+  hosts: all
+  tasks: 
+    - name: Connect to account
+      amazon.aws.sts_assume_role:
+        region: us-east-1
+        role_arn: "iamrole"
+        role_session_name: "enforce_dba"
+      register: assumed_role
+
+    - name: Get rds instance details
+      amazon.aws.rds_instance_info:
+        region: us-east-1
+        access_key: "{{ assumed_role.sts_creds.access_key }}"
+        secret_key: "{{ assumed_role.sts_creds.secret_key }}"
+        session_token: "{{ assumed_role.sts_creds.session_token }}"
+      register: instance
+
+    - name: Filter out engines
+      ansible.builtin.set_fact:
+        postgres_instances: "{{ instance.instances | selectattr('engine', 'search', 'postgres') }}"
+        mysql_instances: "{{ instance.instances | selectattr('engine', 'search', 'mysql') }}"
+
+    - name: Filter out stopped instances
+      ansible.builtin.set_fact: 
+        mysql_instances_avail: "{{ mysql_instances | selectattr('db_instance_status', 'eq', 'available') }}"
+        postgres_instances_avail: "{{ postgres_instances | selectattr('db_instance_status', 'eq', 'available') }}"
+    
+    - name: Get rds cluster details
+      amazon.aws.rds_cluster_info:
+        region: us-east-1
+        access_key: "{{ assumed_role.sts_creds.access_key }}"
+        secret_key: "{{ assumed_role.sts_creds.secret_key }}"
+        session_token: "{{ assumed_role.sts_creds.session_token }}"
+      register: cluster
+
+    - name: Filter out engines
+      ansible.builtin.set_fact:
+        postgres_clusters: "{{ cluster.clusters | selectattr('engine', 'search', 'aurora-postgres') }}"
+        mysql_clusters: "{{ cluster.clusters | selectattr('engine', 'search', 'aurora-mysql') }}"
+
+    - name: Filter out stopped clusters
+      ansible.builtin.set_fact: 
+        mysql_clusters_avail: "{{ mysql_clusters | selectattr('status', 'eq', 'available') }}"
+        postgres_clusters_avail: "{{ postgres_clusters | selectattr('status', 'eq', 'available')}}"
+
+    - name: Create list of endpoints for instances and clusters by engine
+      ansible.builtin.set_fact:
+        mysql_instance_list: "{{ mysql_instances_avail | selectattr('db_cluster_identifier', 'undefined') | map(attribute='endpoint.address') | list }}"
+        mysql_cluster_list: "{{ mysql_clusters_avail | map(attribute='endpoint') | list }}"
+        postgres_instance_list: "{{ postgres_instances_avail | selectattr('db_cluster_identifier', 'undefined') | map(attribute='endpoint.address') | list }}"
+        postgres_cluster_list: "{{ postgres_clusters_avail | map(attribute='endpoint') | list }}"
+      
+    - name: Drop tempuser for postgres instances
+      community.postgresql.postgresql_query:
+        login_host: "{{ item }}"
+        login_user: "{{ db_username }}"
+        login_password: "{{ db_password }}"
+        db: postgres
+        query: 
+        - DO $$
+          BEGIN
+            IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'tempuser_rw') THEN
+             EXECUTE 'DROP ROLE tempuser_rw';
+             RAISE NOTICE 'Role "tempuser_rw" has been dropped.';
+            ELSE
+             RAISE NOTICE 'Role "tempuser_rw" does not exist.';
+            END IF;
+          END $$;
+      with_items: "{{ postgres_instance_list }}"
+      when: postgres_instance_list is defined
+      register: postgres_instance_results
+      ignore_errors: true
+
+    - name: Drop tempuser for postgres cluster
+      community.postgresql.postgresql_query:
+        login_host: "{{ item }}"
+        login_user: "{{ db_username }}"
+        login_password: "{{ db_password }}"
+        db: postgres
+        query: 
+        - DO $$
+          BEGIN
+            IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'tempuser_rw') THEN
+             EXECUTE 'DROP ROLE tempuser_rw';
+             RAISE NOTICE 'Role "tempuser_rw" has been dropped.';
+            ELSE
+             RAISE NOTICE 'Role "tempuser_rw" does not exist.';
+            END IF;
+          END $$;
+      with_items: "{{ postgres_cluster_list }}"
+      when: postgres_cluster_list is defined
+      register: postgres_cluster_results
+      ignore_errors: true
+
+    - name: Drop tempuser for mysql instances
+      community.mysql.mysql_query:
+        login_host: "{{ item }}"
+        login_user: "{{ db_username }}"
+        login_password: "{{ db_password }}"
+        query: DROP USER IF EXISTS tempuser_rw@'%'
+      with_items: "{{ mysql_instance_list }}"
+      when: mysql_instance_list is defined
+      register: mysql_instance_results
+      ignore_errors: true
+
+    - name: Drop tempuser for mysql cluster
+      community.mysql.mysql_query:
+        login_host: "{{ item }}"
+        login_user: "{{ db_username }}"
+        login_password: "{{ db_password }}"
+        query: DROP USER IF EXISTS tempuser_rw@'%'
+      with_items: "{{ mysql_cluster_list }}"
+      when: mysql_cluster_list is defined
+      register: mysql_cluster_results
+      ignore_errors: true
+
+  

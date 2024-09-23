@@ -1,0 +1,146 @@
+---
+- name: Enforce DBA Settings
+  hosts: all
+  tasks:
+    - name: connect to account
+      amazon.aws.sts_assume_role:
+        region: us-east-1
+        role_arn: "iamrole"
+        role_session_name: "enforce_dba"
+      register: assumed_role
+    
+    - name: get rds instance details
+      amazon.aws.rds_instance_info:
+        region: us-east-1
+        access_key: "{{ assumed_role.sts_creds.access_key }}"
+        secret_key: "{{ assumed_role.sts_creds.secret_key }}"
+        session_token: "{{ assumed_role.sts_creds.session_token }}"
+      register: instance
+
+    - name: filter out docdb and aurora engines in instances
+      ansible.builtin.set_fact:
+        instances: "{{ instance.instances | selectattr('engine', 'search', '^(?!aurora|docdb)') }}"
+            
+    - name: filter out stopped instances
+      ansible.builtin.set_fact: 
+        instances_avail: "{{ instances | selectattr('db_instance_status', 'eq', 'available') }}"
+      
+    - name: get rds cluster details
+      amazon.aws.rds_cluster_info:
+        region: us-east-1
+        access_key: "{{ assumed_role.sts_creds.access_key }}"
+        secret_key: "{{ assumed_role.sts_creds.secret_key }}"
+        session_token: "{{ assumed_role.sts_creds.session_token }}"
+      register: cluster
+
+    - name: filter out docdb in clusters
+      ansible.builtin.set_fact:
+        clusters: "{{ cluster.clusters | selectattr('engine', 'search', 'aurora') }}"
+
+    - name: filter out stopped clusters
+      ansible.builtin.set_fact: 
+        clusters_avail: "{{ clusters | selectattr('status', 'eq', 'available') }}"
+
+    - name: get rds cluster instance details
+      amazon.aws.rds_cluster_info:
+        region: us-east-1
+        access_key: "{{ assumed_role.sts_creds.access_key }}"
+        secret_key: "{{ assumed_role.sts_creds.secret_key }}"
+        session_token: "{{ assumed_role.sts_creds.session_token }}"
+      register: cluster_instance
+
+    - name: filter out docdb in cluster instances
+      ansible.builtin.set_fact:
+        cluster_instances: "{{ cluster_instance.clusters | selectattr('engine', 'search', 'aurora') }}"
+   
+    - name: filter out stopped instances in clusters
+      ansible.builtin.set_fact: 
+        cluster_instances_avail: "{{ cluster_instances | selectattr('status', 'eq', 'available') }}"
+   
+    - name: set var for instances in clusters
+      ansible.builtin.set_fact:
+        cluster_instances_list: "{{ cluster_instances_avail | json_query('[*].db_cluster_members[].db_instance_identifier') }}"
+      loop: "{{ cluster_instances_avail }}"
+
+    - name: set var for identifier for instances and clusters
+      ansible.builtin.set_fact:
+        instance_list: "{{ instances_avail| selectattr('db_cluster_identifier', 'undefined') | map(attribute='db_instance_identifier') | list }}"
+        clusters_list: "{{ clusters_avail | map(attribute='db_cluster_identifier') | list }}"
+
+    - block:
+      - name: enforce DBA setting for clusters
+        amazon.aws.rds_cluster:
+          region: us-east-1
+          access_key: "{{ assumed_role.sts_creds.access_key }}"
+          secret_key: "{{ assumed_role.sts_creds.secret_key }}"
+          session_token: "{{ assumed_role.sts_creds.session_token }}"
+          id: '{{ item }}'
+          state: present
+          copy_tags_to_snapshot: true
+          deletion_protection: true
+          storage_encrypted: true
+          preferred_maintenance_window: "Thu:5:00-Thu:09:00"
+          purge_tags: false
+          apply_immediately: true
+          backup_retention_period: 35
+          tags:
+            owner: dba@rxbenefits.com
+            env: prod
+        with_items: "{{ clusters_list }}"
+        when: clusters_list is defined
+        register: clusters_after
+      - name: enforce DBA settings for target instances in clusters
+        amazon.aws.rds_instance:
+          region: us-east-1
+          access_key: "{{ assumed_role_ss.sts_creds.access_key }}"
+          secret_key: "{{ assumed_role_ss.sts_creds.secret_key }}"
+          session_token: "{{ assumed_role_ss.sts_creds.session_token }}"
+          id: '{{ item }}'
+          state: present
+          auto_minor_version_upgrade: true
+          enable_performance_insights: false
+          purge_tags: false
+          storage_encrypted: true
+          apply_immediately: true
+          monitoring_interval: 60
+          monitoring_role_arn: "arn:aws:iam::224285322528:role/rds-monitoring-role"
+          preferred_maintenance_window: "Thu:05:00-Thu:5:30"
+          backup_retention_period: 35
+          tags:
+            owner: dba@rxbenefits.com
+            env: prod
+        with_items: "{{ ss_cluster_instances_list }}"
+        when: ss_cluster_instances_list is defined 
+        register: ss_cluster_instances_after
+      - name: enforce DBA settings for shared service target instances
+        amazon.aws.rds_instance:
+          region: us-east-1
+          access_key: "{{ assumed_role.sts_creds.access_key }}"
+          secret_key: "{{ assumed_role.sts_creds.secret_key }}"
+          session_token: "{{ assumed_role.sts_creds.session_token }}"
+          id: '{{ item }}'
+          state: present
+          auto_minor_version_upgrade: true
+          copy_tags_to_snapshot: true
+          deletion_protection: true
+          enable_performance_insights: false
+          purge_tags: false
+          storage_encrypted: true
+          apply_immediately: true
+          monitoring_interval: 60
+          monitoring_role_arn: "arn:aws:iam::account:role/rds-monitoring-role"
+          preferred_maintenance_window: "Thu:05:00-Thu:5:30"
+          backup_retention_period: 35
+          tags:
+            owner: randoneering@randoneering.tech
+            env: prod
+        with_items: "{{ instance_list }}"
+        when: instance_list is defined 
+        register: instances_after
+      rescue:
+      - name: send notification via teams when enforce dba settings fails for instances
+        community.general.office_365_connector_card:
+          webhook: "{{ webhook }}"
+          title: "Enforce DB settings failed for ss instances"
+          summary: "Enforce DB settings failed "
+          text: "Check job {{ tower_job_id }} Enforce DB settings failure"

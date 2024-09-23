@@ -1,0 +1,106 @@
+---
+- name: Temp user for production writes
+  hosts: all
+  tasks: 
+    - name: Generate password tempuser_rw (mysql)
+      ansible.builtin.set_fact:
+        mysql_user_rw_pass: "{{ lookup('community.general.random_string', special=false, numbers=true, length=20) }}"
+      when: db_host_mysql != None
+      no_log: false
+
+    - name: Create temp user for mysql host
+      community.mysql.mysql_user:
+        login_host: "{{ db_host_mysql }}"
+        login_user: "{{ db_username }}"
+        login_password: "{{ db_password }}"
+        name: "tempuser_rw"
+        host: "{{ item.host }}"
+        password: "{{ mysql_user_rw_pass }}"
+        priv: 
+          '{{ mysql_db }}.*: USAGE/{{ mysql_db }}.*: SELECT, INSERT, UPDATE, DELETE, CREATE TEMPORARY TABLES, LOCK TABLES, EXECUTE, SHOW VIEW'
+      with_items:
+        - { host: "172.16.%"}
+      when: db_host_mysql != None
+
+    - name: Generate password tempuser_rw (postgres)
+      ansible.builtin.set_fact:
+        pg_user_rw_pass: "{{ lookup('community.general.random_string', special=false, numbers=true, length=20) }}"
+      when: db_host_pg != None
+      no_log: true
+
+    - name: Create tempuser_rw
+      community.postgresql.postgresql_user:
+        login_host: "{{ db_host_pg }}"
+        login_user: "{{ db_username }}"
+        login_password: "{{ db_password }}"
+        db: "{{ pg_db }}"
+        name: "tempuser_rw"
+        password: "{{ pg_user_rw_pass }}"
+      when: db_host_pg != None
+
+    - name: Grants for RW to tempuser_rw
+      community.postgresql.postgresql_membership:
+        login_host: "{{ db_host_pg }}"
+        login_user: "{{ db_username }}"
+        login_password: "{{ db_password }}"
+        db: "{{ pg_db }}"
+        group: readwrite
+        target_role: "tempuser_rw"
+      when: db_host_pg != None
+
+    - name: Send email with credentials tempuser (mysql)
+      community.general.mail:
+        host: smtp.rxbenefits.com
+        port: 25
+        to: "{{ email }}"
+        from: dba@rxbenefits.com
+        subject: 'Credentials for temp user request in {{ jira_ticket }}'
+        secure: never
+        body: |
+          credentials for {{ jira_ticket }}
+          user: "tempuser_rw"
+          password: {{ mysql_user_rw_pass }}
+          endpoint: {{ endpoint }}
+      when: db_host_mysql != None
+      delegate_to: localhost
+
+    - name: Send email with credentials teampuser (postgres)
+      community.general.mail:
+        host: smtp.rxbenefits.com
+        port: 25
+        to: "{{ email }}"
+        from: dba@rxbenefits.com
+        secure: never
+        subject: 'Credentials for temp user request in {{ jira_ticket }}'
+        body: |
+          credentials for {{ jira_ticket }}
+          user: "tempuser_rw"
+          password: {{ pg_user_rw_pass }}
+          endpoint: {{ endpoint }}
+      when: db_host_pg != None
+      delegate_to: localhost
+
+    - name: Alert DBA team about tempuser creation (email)
+      community.general.mail:
+        host: smtp.rxbenefits.com
+        port: 25
+        to: dba@rxbenefits.com
+        from: dba@rxbenefits.com
+        subject: 'Tempuser created for {{ jira_ticket }}'
+        secure: never
+        body: |
+          Tempuser was created for {{ endpoint }}. This will be dropped at 9pm CST by a scheduled ansible-playbook
+      delegate_to: localhost
+
+    - name: Alert DBA team about tempuser creation (teams)
+      community.general.mail:
+        host: smtp.rxbenefits.com
+        port: 25
+        to: d508929c.rxbenefits.com@amer.teams.ms
+        from: dba@rxbenefits.com
+        subject: 'Tempuser created for {{ jira_ticket }}'
+        secure: never
+        body: |
+          Tempuser was created for {{ endpoint }}. This will be dropped at 9pm CST by a scheduled ansible-playbook
+      delegate_to: localhost
+      
