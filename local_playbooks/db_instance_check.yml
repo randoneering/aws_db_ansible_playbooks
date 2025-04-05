@@ -1,0 +1,139 @@
+---
+- name: Enforce DBA Template/Standard Settings
+  hosts: localhost
+  vars_files:
+    - ./external_vars/general.yml
+  tasks:
+    - name: connect to account
+      amazon.aws.sts_assume_role:
+        region: us-east-1
+        role_arn: "arn:aws:iam::account#:role/ansible_managementt"
+        role_session_name: "enforce_dba"
+      register: assumed_role_account
+    
+    - name: get account rds instance details
+      amazon.aws.rds_instance_info:
+        region: us-east-1
+        access_key: "{{ assumed_role_account.sts_creds.access_key }}"
+        secret_key: "{{ assumed_role_account.sts_creds.secret_key }}"
+        session_token: "{{ assumed_role_account.sts_creds.session_token }}"
+      register: account_instance
+
+    - name: filter out docdb and aurora engines in instances
+      ansible.builtin.set_fact:
+        account_instances: "{{ account_instance.instances | selectattr('engine', 'search', '^(?!aurora|docdb)') }}"
+            
+    - name: filter out stopped instances
+      ansible.builtin.set_fact: 
+        account_instances_avail: "{{ account_instances | selectattr('db_instance_status', 'eq', 'available') }}"
+      
+    - name: get account rds cluster details
+      amazon.aws.rds_cluster_info:
+        region: us-east-1
+        access_key: "{{ assumed_role_account.sts_creds.access_key }}"
+        secret_key: "{{ assumed_role_account.sts_creds.secret_key }}"
+        session_token: "{{ assumed_role_account.sts_creds.session_token }}"
+      register: account_cluster
+
+    - name: filter out docdb in clusters
+      ansible.builtin.set_fact:
+        account_clusters: "{{ account_cluster.clusters | selectattr('engine', 'search', 'aurora') }}"
+
+    - name: filter out stopped clusters
+      ansible.builtin.set_fact: 
+        account_clusters_avail: "{{ account_clusters | selectattr('status', 'eq', 'available') }}"
+
+    - name: get account rds cluster instance details
+      amazon.aws.rds_cluster_info:
+        region: us-east-1
+        access_key: "{{ assumed_role_account.sts_creds.access_key }}"
+        secret_key: "{{ assumed_role_account.sts_creds.secret_key }}"
+        session_token: "{{ assumed_role_account.sts_creds.session_token }}"
+      register: account_cluster_instance
+
+    - name: filter out docdb in cluster instances
+      ansible.builtin.set_fact:
+        account_cluster_instances_avail: "{{ account_cluster_instance.clusters | selectattr('engine', 'search', 'aurora') }}"
+   
+    - name: filter out account clusters, instances in clusters, and standalone instances
+      ansible.builtin.set_fact:
+        account_clusters_list: "{{ account_clusters_avail | map(attribute='db_cluster_identifier') | list }}"
+        account_cluster_instances_list: "{{ account_cluster_instances_avail | selectattr('db_cluster_identifier', 'undefined') | map(attribute='db_instance_identifier') | list }}"
+        account_instances_list: "{{ account_instances_avail | map(attribute='db_instance_identifier') | list }}"
+    - block:
+      - name: enforce DBA setting for account clusters
+        amazon.aws.rds_cluster:
+          region: us-east-1
+          access_key: "{{ assumed_role_account.sts_creds.access_key }}"
+          secret_key: "{{ assumed_role_account.sts_creds.secret_key }}"
+          session_token: "{{ assumed_role_account.sts_creds.session_token }}"
+          id: '{{ item }}'
+          state: present
+          copy_tags_to_snapshot: true
+          deletion_protection: true
+          storage_encrypted: true
+          backup_retention_period: 
+          preferred_maintenance_window: "Thu:00:00-Thu:02:00"
+          #enable_performance_insights: true # Not Available in rds_cluster, but working on PR for this | https://github.com/ansible-collections/amazon.aws/pull/2543
+          #performance_insights_retention_period: 7 # Not Available in rds_cluster, but working on PR for this |  https://github.com/ansible-collections/amazon.aws/pull/2543
+          purge_tags: false
+          apply_immediately: true
+          tags:
+        with_items: "{{ account_clusters_list }}"
+        when: account_clusters_list is defined
+        register: account_clusters_after
+      - name: enforce DBA settings for account target instances in clusters
+        amazon.aws.rds_instance:
+          region: us-east-1
+          access_key: "{{ assumed_role_account.sts_creds.access_key }}"
+          secret_key: "{{ assumed_role_account.sts_creds.secret_key }}"
+          session_token: "{{ assumed_role_account.sts_creds.session_token }}"
+          id: '{{ item }}'
+          state: present
+          auto_minor_version_upgrade: true
+          #enable_performance_insights: true # Cannot set if performance insights is set at cluster level
+          #performance_insights_retention_period: 7 # Cannot set if performance insights is set at cluster level
+          purge_tags: false
+          storage_encrypted: true
+          apply_immediately: true
+          monitoring_interval: 60
+          monitoring_role_arn: "arn:aws:iam::account#:role/rds-monitoring-role"
+          preferred_maintenance_window: "Thu:00:00-Thu:02:00"
+          tags:
+        with_items: "{{ account_cluster_instances_list }}"
+        when: account_cluster_instances_list is defined 
+        register: account_cluster_instances_after
+      - name: enforce DBA settings for account target instances
+        amazon.aws.rds_instance:
+          region: us-east-1
+          access_key: "{{ assumed_role_account.sts_creds.access_key }}"
+          secret_key: "{{ assumed_role_account.sts_creds.secret_key }}"
+          session_token: "{{ assumed_role_account.sts_creds.session_token }}"
+          id: '{{ item }}'
+          state: present
+          auto_minor_version_upgrade: true
+          copy_tags_to_snapshot: true
+          deletion_protection: true
+          #enable_performance_insights: true # Cannot set if performance insights is set at cluster level
+          #performance_insights_retention_period: 7 # Cannot set if performance insights is set at cluster level
+          purge_tags: false
+          storage_encrypted: true
+          apply_immediately: true
+          monitoring_interval: 60
+          monitoring_role_arn: "arn:aws:iam::account#:role/rds-monitoring-role"
+          preferred_maintenance_window: "Thu:00:00-Thu:02:00"
+          tags:
+        with_items: "{{ account_instances_list }}"
+        when: account_instances_list is defined 
+        register: account_instances_after
+      rescue:
+      - name: send notification via teams email 
+        ansible.builtin.mail:
+          host: smtp.server.com
+          port: 25
+          from: service@randoneering.tech
+          to: "{{ channel_email }}"
+          subtype: html
+          subject: "Enforce DB settings failed for the  account instances"
+          body: "Check job {{ tower_job_id }} Enforce DB settings failure"
+

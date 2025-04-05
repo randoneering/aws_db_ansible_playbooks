@@ -1,23 +1,11 @@
-<html>
-<head>
-  <title> Unused Instances Check</title>
-</head>
-<body>
- <p>
- The following instances have not received a connection in over 14 days. Please shutdown these instances temporarily and follow up with impacted users
- </p>
- <p> Unused Instances:</p>
- <ul>
-   {% for instance in results_instances %}
-   <li>{{ instance }}</li>
-   {% endfor %}
- </ul>
- <p> Stopped Instances:</p>
- <ul>
-   {% for instance in instances_stopped %}
-   <li>{{ instance }}</li>
-   {% endfor %}
-   {% for clusters in clusters_stopped %}
-   <li>{{ clusters }}</li>
-</body>
-</html>
+The following instances have not received a connection in over 14 days. Please shutdown these instances temporarily and follow up with impacted users
+Account Unused Instances:
+	•	{% for instance in account_results_instances %}
+	•	{{ instance }}
+	•	{% endfor %}
+Stopped Instances:
+	•	{% for instance in account_instances_stopped %}
+	•	{{ instance }}
+	•	{% endfor %} {% for clusters in account_clusters_stopped %}
+	•	{{ clusters }}
+	•	{% endfor %}

@@ -1,0 +1,92 @@
+---
+- name: reset master user  password on instances daily
+  hosts: all
+  tasks:
+    - name: connect to account
+      amazon.aws.sts_assume_role:
+        region: us-east-1
+        role_arn: "arn:aws:iam::account#:role/ansible_management"
+        role_session_name: "masteruser_reset"
+      register: assumed_role_account
+    
+    - name: get account rds instance details
+      amazon.aws.rds_instance_info:
+        region: us-east-1
+        access_key: "{{ assumed_role_account.sts_creds.access_key }}"
+        secret_key: "{{ assumed_role_account.sts_creds.secret_key }}"
+        session_token: "{{ assumed_role_account.sts_creds.session_token }}"
+      register: account_instances
+
+    - name: get account rds cluster details
+      amazon.aws.rds_cluster_info:
+        region: us-east-1
+        access_key: "{{ assumed_role_account.sts_creds.access_key }}"
+        secret_key: "{{ assumed_role_account.sts_creds.secret_key }}"
+        session_token: "{{ assumed_role_account.sts_creds.session_token }}"
+      register: account_clusters
+
+    - name: filter out stopped instances/clusters
+      ansible.builtin.set_fact: 
+        account_instance_check: "{{ account_instances.instances | selectattr('db_instance_status', 'eq', 'available') }}"
+        account_clusters_check: "{{ account_clusters.clusters | selectattr('status', 'eq', 'available') }}"
+
+
+    - name: set var for identifier for ss instances and clusters
+      ansible.builtin.set_fact:
+        account_instance_list: "{{ account_instance_check | selectattr('db_cluster_identifier', 'undefined') | map(attribute='db_instance_identifier') | list }}"
+        account_cluster_list: "{{ account_clusters_check | map(attribute='db_cluster_identifier') | list }}"
+
+    - name: generate RDS master password for instances 
+      ansible.builtin.set_fact:
+        account_int_pass: "{{ lookup('community.general.random_string', special=false, numbers=true, length=20) }}"
+      with_items: "{{ account_instance_list }}"
+      loop_control:
+        index_var: account_instance_index
+      no_log: true
+
+    - name: generate RDS master password for clusters 
+      ansible.builtin.set_fact:
+        account_cluster_pass: "{{ lookup('community.general.random_string', special=false, numbers=true, length=20) }}"
+      with_items: "{{ account_cluster_list }}"
+      loop_control:
+        index_var: account_cluster_index
+      no_log: true
+
+    - block:
+      - name: reset master user /root password for account clusters 
+        amazon.aws.rds_cluster:
+          region: us-east-1
+          access_key: "{{ assumed_role_account.sts_creds.access_key }}"
+          secret_key: "{{ assumed_role_account.sts_creds.secret_key }}"
+          session_token: "{{ assumed_role_account.sts_creds.session_token }}"
+          id: '{{ item }}'
+          state: present
+          force_update_password: true
+          master_user_password: "{{ account_cluster_pass }}"
+          apply_immediately: true
+        with_items: "{{ account_cluster_list }}"
+        when: account_cluster_list is defined
+   
+      - name: reset master user /root password for ss instances
+        amazon.aws.rds_instance:
+          region: us-east-1
+          access_key: "{{ assumed_role_account.sts_creds.access_key }}"
+          secret_key: "{{ assumed_role_account.sts_creds.secret_key }}"
+          session_token: "{{ assumed_role_account.sts_creds.session_token }}"
+          id: '{{ item }}'
+          state: present
+          force_update_password: true
+          master_user_password: "{{ account_int_pass }}"
+          apply_immediately: true
+        with_items: "{{ account_instance_list }}"
+        when: account_instance_list is defined
+      rescue:
+      - name: send notification via teams email 
+        ansible.builtin.mail:
+          host: account.smtp.server
+          port: 25
+          from: service@randoneering.tech
+          to: "{{ channel_email }}"
+          subtype: html
+          subject: "Password Reset for account failed"
+          body: "Check job {{ tower_job_id }} for password reset failure"

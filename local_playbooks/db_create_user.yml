@@ -1,6 +1,39 @@
 ---
-- name: Playbook to create users for mysql, postgres, and docdb (mongodb)
+- name: Playbook to create users for mysql, postgres, and mongodb (docdb)
   hosts: all
+  vars_files:
+    - external_vars/secrets/secrets.yml
+  vars:
+    db_username: "service_user"
+  vars_prompt:
+    - name: db_host
+      prompt: What database instance is this for (include DNS name or RDS Endpoint)
+      private: false
+
+    - name: db_type
+      prompt: Is this for postgres, mysql, or docdb?? (enter postgres, docdb, or mysql)
+      private: false
+
+    - name: database
+      prompt: What is the target database?
+      private: false
+
+    - name: grant_type
+      prompt: What is the grant level? readonly or readwrite?
+      private: false
+
+    - name: target_username
+      prompt: What is the target username? (randoneering_ro, for example)
+      private: false
+
+    - name: email
+      prompt: What is the user's email?
+      private: false
+    
+    - name: ticket
+      prompt: What is the ticket number?
+      private: false
+
   tasks:
     - name: generate password for target user
       ansible.builtin.set_fact:
@@ -27,7 +60,7 @@
     - name: create readwrite user (mysql)
       community.mysql.mysql_user:
         login_host: "{{ db_host }}"
-        login_user: "{{ db_username  }}"
+        login_user: "{{ db_username }}"
         login_password: "{{ db_password }}"
         name: "{{ target_username }}"
         host: "{{ item.host }}"
@@ -41,7 +74,7 @@
         - db_type == "mysql"
         - grant_type == "readwrite"
 
-    - name: create readonly user (postgres)
+    - name: create postgres user (RO)
       community.postgresql.postgresql_user:
         login_host: "{{ db_host }}"
         login_user: "{{ db_username }}"
@@ -53,7 +86,7 @@
         - db_type == "postgres"
         - grant_type == "readonly"
 
-    - name: create readwrite user (postgres)
+    - name: create postgres user (RW)
       community.postgresql.postgresql_user:
         login_host: "{{ db_host }}"
         login_user: "{{ db_username }}"
@@ -64,7 +97,7 @@
       when:
         - db_type == "postgres"
         - grant_type == "readwrite"
-
+        
     - name: grants for RO postgres user
       community.postgresql.postgresql_membership:
         login_host: "{{ db_host }}"
@@ -89,7 +122,7 @@
         - db_type == "postgres"
         - grant_type == "readwrite"
 
-    - name: Create read only user for AWS DocumentDB # works for mongoDB as well
+    - name: Create read only user for AWS DocumentDB
       community.mongodb.mongodb_user:
         login_host: "{{ db_host }}"
         login_user: "{{ db_username }}"
@@ -98,9 +131,9 @@
         login_database: "admin"
         ssl: true
         ssl_ca_certs: /path/to/your/cert
-        database: "{{ database}}"
+        database: "{{ database }}"
         name: "{{ target_username }}"
-        password: "{{ target_user_pass}}"
+        password: "{{ target_user_pass }}"
         roles: read
       when:
         - db_type == "docdb"
@@ -117,7 +150,7 @@
         ssl_ca_certs: /path/to/your/cert
         database: "{{ database }}"
         name: "{{ target_username }}"
-        password: "{{ target_user_pass}}"
+        password: "{{ target_user_pass }}"
         roles: readWrite
       when:
         - db_type == "docdb"
@@ -131,7 +164,7 @@
         from: service@randoneering.tech
         subject: 'Credentials for requested DB Access {{ ticket }}'
         body: |
-          credentials for {{ ticket }}
+          credentials for {{ jira_ticket }}
           user: {{ target_username }}
           password: {{ target_user_pass }}
           host: {{ db_host }}

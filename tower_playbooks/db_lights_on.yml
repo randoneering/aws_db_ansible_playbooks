@@ -1,82 +1,77 @@
 ---
-- name: Turn on lower level env database instances
+- name: Turn on lower level env database instances and clusters
   hosts: all
   vars:
-    tag_query1: "[?tags.LightsOut == 'True'].db_instance_identifier"
-    tag_query2: "[?tags.LightsOut == 'True'].db_cluster_identifier"
+    cluster_nonexempt: "[?tags.LightsOut == 'True'].db_cluster_identifier"
+    instance_nonexempt: "[?tags.LightsOut == 'True'].db_instance_identifier"
+
   tasks:
-    - name: Connect to account
+    - name: connect Account
       amazon.aws.sts_assume_role:
         region: us-east-1
-        role_arn: iamrole
-        role_session_name: "db_lights_on_policy"
-      register: assumed_role
+        role_arn: "arn:aws:iam::account#:role/ansible_management"
+        role_session_name: "lights_on_policy"
+      register: assumed_role_account
 
-    - name: get rds instance details
+    - name: get Account rds instance details 
       amazon.aws.rds_instance_info:
         region: us-east-1
-        access_key: "{{ assumed_role.sts_creds.access_key }}"
-        secret_key: "{{ assumed_role.sts_creds.secret_key }}"
-        session_token: "{{ assumed_role.sts_creds.session_token }}"
-      register: instance
+        access_key: "{{ assumed_role_account.sts_creds.access_key }}"
+        secret_key: "{{ assumed_role_account.sts_creds.secret_key }}"
+        session_token: "{{ assumed_role_account.sts_creds.session_token }}"
+      register: account_instance
 
     - name: filter out docdb and non_aurora instances in instances
       ansible.builtin.set_fact:
-        instances: "{{ instance.instances | selectattr('engine', 'search', '^(?!aurora|docdb)') }}"
+        account_instances: "{{ account_instance.instances | selectattr('engine', 'search', '^(?!aurora|docdb)') }}"
 
-    - name: filter out stopped instances
-      ansible.builtin.set_fact: 
-        instances_avail: "{{ instances | selectattr('db_instance_status', 'eq', 'stopped') }}"
-
-    - name: filter out exempt instances
+    - name: filter out nonexempt instances 
       ansible.builtin.set_fact:
-        instances_nonexempt: "{{ instances_avail | json_query(tag_query1) }}"
+        account_instances_nonexempt: "{{ account_instances | json_query(instance_nonexempt) }}"
 
-    - name: get rds cluster details
+    - name: get Account rds cluster details
       amazon.aws.rds_cluster_info:
         region: us-east-1
-        access_key: "{{ assumed_role.sts_creds.access_key }}"
-        secret_key: "{{ assumed_role.sts_creds.secret_key }}"
-        session_token: "{{ assumed_role.sts_creds.session_token }}"
-      register: cluster
+        access_key: "{{ assumed_role_account.sts_creds.access_key }}"
+        secret_key: "{{ assumed_role_account.sts_creds.secret_key }}"
+        session_token: "{{ assumed_role_account.sts_creds.session_token }}"
+      register: account_cluster
 
-    - name: filter out stopped clusters
-      ansible.builtin.set_fact: 
-        clusters_avail: "{{ cluster.clusters | selectattr('status', 'eq', 'stopped') }}"    
-
-    - name: filter out exempt clusters
+    - name: filter out nonexempt clusters
       ansible.builtin.set_fact:
-        clusters_nonexempt: "{{ clusters_avail | json_query(tag_query2) }}"
-
+        account_clusters_nonexempt: "{{ account_cluster.clusters | json_query(cluster_nonexempt) }}"
     - block:
       - name: start clusters
         amazon.aws.rds_cluster:
           region: us-east-1
-          access_key: "{{ assumed_role.sts_creds.access_key }}"
-          secret_key: "{{ assumed_role.sts_creds.secret_key }}"
-          session_token: "{{ assumed_role.sts_creds.session_token }}"
+          access_key: "{{ assumed_role_account.sts_creds.access_key }}"
+          secret_key: "{{ assumed_role_account.sts_creds.secret_key }}"
+          session_token: "{{ assumed_role_account.sts_creds.session_token }}"
           db_cluster_identifier: '{{ item }}'
           state: started
           wait: false
-        with_items: "{{ clusters_nonexempt }}"
-        when: clusters_nonexempt is defined
-        register: clusters_start
+        with_items: "{{ account_clusters_nonexempt }}"
+        when: account_clusters_nonexempt is defined
+        register: account_clusters_started
       - name: start instances
         amazon.aws.rds_instance:
           region: us-east-1
-          access_key: "{{ assumed_role.sts_creds.access_key }}"
-          secret_key: "{{ assumed_role.sts_creds.secret_key }}"
-          session_token: "{{ assumed_role.sts_creds.session_token }}"
+          access_key: "{{ assumed_role_account.sts_creds.access_key }}"
+          secret_key: "{{ assumed_role_account.sts_creds.secret_key }}"
+          session_token: "{{ assumed_role_account.sts_creds.session_token }}"
           db_instance_identifier: '{{ item }}'
           state: started
           wait: false
-        with_items: "{{ instances_nonexempt }}"
-        when: instances_nonexempt is defined 
-        register: instances_start
+        with_items: "{{ account_instances_nonexempt }}"
+        when: account_instances_nonexempt is defined 
+        register: account_instances_started
       rescue:
-      - name: send notification via teams when startup fails
-        community.general.office_365_connector_card:
-          webhook: "{{ webhook }}"
-          title: "LightsOn playbook failed"
-          summary: "The LightsOn playbook experienced an error "
-          text: "Check job {{ tower_job_id }} for LightsOn playbook failure"
+      - name: send notification via teams email 
+        ansible.builtin.mail:
+          host: your.smtp.server
+          port: 25
+          from: service@randoneering.tech
+          to: "{{ channel_email }}"
+          subtype: html
+          subject: "LightsOn playbook failed for Account"
+          body: "Check job {{ tower_job_id }} for LightsOn playbook failure"

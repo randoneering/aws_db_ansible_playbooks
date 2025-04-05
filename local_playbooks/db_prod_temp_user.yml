@@ -1,6 +1,33 @@
 ---
-- name: Temp user for Production Databases (mysql, postgres, or docdb)
-  hosts: all
+- name: Temp user for production writes
+  hosts: localhost
+  vars_prompt:
+    - name: db_host
+      prompt: What database instance is this for (include DNS name or RDS Endpoint)
+      private: false
+
+    - name: db_type
+      prompt: Is this for postgres, mysql, or docdb?
+      private: false
+
+    - name: database
+      prompt: What is the target database?
+      private: false
+
+    - name: requested_by
+      prompt: Who requested the temp user?
+      private: false
+
+    - name: email
+      prompt: What is the user's email?
+      private: false
+
+    - name: ticket
+      prompt: What is theticket?
+      private: false
+  vars_files: 
+    - ./external_vars/secrets/secrets.yml
+    - ./external_vars/general.yml
   tasks: 
     - name: Generate password tempuser_rw
       ansible.builtin.set_fact:

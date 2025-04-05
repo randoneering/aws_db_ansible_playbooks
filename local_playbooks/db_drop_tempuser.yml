@@ -1,11 +1,18 @@
 ---
 - name: Drop all tempusers
-  hosts: all
-  tasks: 
+  hosts: localhost
+  
+  vars_files:
+    - external_vars/secrets/secrets.yml 
+
+  vars:
+    db_username: "ansible_service_user"
+
+  tasks:
     - name: Connect to account
       amazon.aws.sts_assume_role:
         region: us-east-1
-        role_arn: "arn:aws:iam::account:role/ansible_management"
+        role_arn: "arn:aws:iam::account#:role/ansible_management"
         role_session_name: "drop_temp_user"
       register: assumed_role_account
 
@@ -23,7 +30,7 @@
         account_mysql_instances: "{{ account_instance.instances | selectattr('engine', 'search', 'mysql') }}"
 
     - name: Filter out stopped instances
-      ansible.builtin.set_fact: 
+      ansible.builtin.set_fact:
         mysql_instances_avail: "{{ account_mysql_instances | selectattr('db_instance_status', 'eq', 'available') }}"
         postgres_instances_avail: "{{ account_postgres_instances | selectattr('db_instance_status', 'eq', 'available') }}"
     
@@ -41,8 +48,9 @@
         account_mysql_clusters: "{{ account_cluster.clusters | selectattr('engine', 'search', 'aurora-mysql') }}"
         account_docdb_clusters: "{{ account_cluster.clusters | selectattr('engine', 'search', 'docdb') }}"
 
+
     - name: Filter out stopped clusters
-      ansible.builtin.set_fact: 
+      ansible.builtin.set_fact:
         mysql_clusters_avail: "{{ account_mysql_clusters | selectattr('status', 'eq', 'available') }}"
         postgres_clusters_avail: "{{ account_postgres_clusters | selectattr('status', 'eq', 'available') }}"
         docdb_clusters_avail: "{{ account_docdb_clusters | selectattr('status', 'eq', 'available') }}"
@@ -127,10 +135,6 @@
         login_user: "{{ db_username }}"
         login_password: "{{ db_password }}"
         query:
-          - DROP USER IF EXISTS tempuser_rw@'%'
-          - DROP USER IF EXISTS tempuser1_rw@'%'
-          - DROP USER IF EXISTS tempuser2_rw@'%'
-          - DROP USER IF EXISTS tempuser3_rw@'%'
           - DROP USER IF EXISTS tempuser_rw@'172.%'
           - DROP USER IF EXISTS tempuser_rw@'10.%'
           - DROP USER IF EXISTS tempuser1_rw@'172.%'
@@ -164,10 +168,6 @@
         login_user: "{{ db_username }}"
         login_password: "{{ db_password }}"
         query: 
-          - DROP USER IF EXISTS tempuser_rw@'%'
-          - DROP USER IF EXISTS tempuser1_rw@'%'
-          - DROP USER IF EXISTS tempuser2_rw@'%'
-          - DROP USER IF EXISTS tempuser3_rw@'%'
           - DROP USER IF EXISTS tempuser_rw@'172.%'
           - DROP USER IF EXISTS tempuser_rw@'10.%'
           - DROP USER IF EXISTS tempuser1_rw@'172.%'
@@ -194,7 +194,7 @@
       when: account_mysql_cluster_list is defined
       register: mysql_cluster_results
       ignore_errors: true
-      
+
     - name: Drop tempusers at AWS DocumentDB endpoint/cluster
       community.mongodb.mongodb_shell:
         login_host: "{{ item }}"

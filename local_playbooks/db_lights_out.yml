@@ -1,6 +1,6 @@
 ---
-- name: Shutdown lower level env database instances and clusters
-  hosts: all
+- name: Shutdown lower-level env database instances
+  hosts: localhost
   vars:
     cluster_nonexempt: "[?tags.LightsOut == 'True'].db_cluster_identifier"
     instance_nonexempt: "[?tags.LightsOut == 'True'].db_instance_identifier"

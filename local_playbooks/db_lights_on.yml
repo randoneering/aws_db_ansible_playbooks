@@ -1,18 +1,19 @@
 ---
-- name: Shutdown lower level env database instances and clusters
-  hosts: all
+- name: Turn on environment database instances
+  hosts: localhost
   vars:
+    channel_email: ""
     cluster_nonexempt: "[?tags.LightsOut == 'True'].db_cluster_identifier"
     instance_nonexempt: "[?tags.LightsOut == 'True'].db_instance_identifier"
   tasks:
-    - name: connect to account
+    - name: connect Account
       amazon.aws.sts_assume_role:
         region: us-east-1
-        role_arn: "arn:aws:iam::account#1:role/ansible_management"
-        role_session_name: "lights_out_policy"
+        role_arn: "arn:aws:iam::account#:role/ansible_management"
+        role_session_name: "lights_on_policy"
       register: assumed_role_account
 
-    - name: get account rds instance details
+    - name: get Account rds instance details 
       amazon.aws.rds_instance_info:
         region: us-east-1
         access_key: "{{ assumed_role_account.sts_creds.access_key }}"
@@ -24,15 +25,11 @@
       ansible.builtin.set_fact:
         account_instances: "{{ account_instance.instances | selectattr('engine', 'search', '^(?!aurora|docdb)') }}"
 
-    - name: filter out stopped instances
-      ansible.builtin.set_fact: 
-        account_instances_avail: "{{ account_instances | selectattr('db_instance_status', 'eq', 'available') }}"
-
     - name: filter out nonexempt instances 
       ansible.builtin.set_fact:
-        account_instances_nonexempt: "{{ account_instances_avail | json_query(instance_nonexempt) }}"
+        account_instances_nonexempt: "{{ account_instances | json_query(instance_nonexempt) }}"
 
-    - name: get account rds cluster details
+    - name: get Account rds cluster details
       amazon.aws.rds_cluster_info:
         region: us-east-1
         access_key: "{{ assumed_role_account.sts_creds.access_key }}"
@@ -40,38 +37,34 @@
         session_token: "{{ assumed_role_account.sts_creds.session_token }}"
       register: account_cluster
 
-    - name: filter out stopped clusters
-      ansible.builtin.set_fact: 
-        account_clusters_avail: "{{ account_cluster.clusters | selectattr('status', 'eq', 'available') }}"    
-
     - name: filter out nonexempt clusters
       ansible.builtin.set_fact:
-        account_clusters_nonexempt: "{{ account_clusters_avail | json_query(cluster_nonexempt) }}"
+        account_clusters_nonexempt: "{{ account_cluster.clusters | json_query(cluster_nonexempt) }}"
     - block:
-      - name: shutdown clusters
+      - name: start clusters
         amazon.aws.rds_cluster:
           region: us-east-1
           access_key: "{{ assumed_role_account.sts_creds.access_key }}"
           secret_key: "{{ assumed_role_account.sts_creds.secret_key }}"
           session_token: "{{ assumed_role_account.sts_creds.session_token }}"
           db_cluster_identifier: '{{ item }}'
-          state: stopped
+          state: started
           wait: false
         with_items: "{{ account_clusters_nonexempt }}"
         when: account_clusters_nonexempt is defined
-        register: account_clusters_shutdown
-      - name: shutdown instances
+        register: account_clusters_started
+      - name: start instances
         amazon.aws.rds_instance:
           region: us-east-1
           access_key: "{{ assumed_role_account.sts_creds.access_key }}"
           secret_key: "{{ assumed_role_account.sts_creds.secret_key }}"
           session_token: "{{ assumed_role_account.sts_creds.session_token }}"
           db_instance_identifier: '{{ item }}'
-          state: stopped
+          state: started
           wait: false
         with_items: "{{ account_instances_nonexempt }}"
         when: account_instances_nonexempt is defined 
-        register: account_instances_shutdown
+        register: account_instances_started
       rescue:
       - name: send notification via teams email 
         ansible.builtin.mail:
@@ -80,5 +73,5 @@
           from: service@randoneering.tech
           to: "{{ channel_email }}"
           subtype: html
-          subject: "LightsOff playbook failed for Account"
-          body: "Check job {{ tower_job_id }} for LightsOff playbook failure"
+          subject: "LightsOn playbook failed for Account"
+          body: "Check job {{ tower_job_id }} for LightsOn playbook failure"
